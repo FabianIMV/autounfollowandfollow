@@ -62,7 +62,7 @@ jobs:
         if [ -f requirements.txt ]; then pip install -r requirements.txt; else pip install requests; fi
     
     - name: 🤖 Run GitHub follower automation
-      if: github.event.inputs.action != 'discovery'
+      if: github.event_name == 'schedule' || github.event.inputs.action == 'both' || github.event.inputs.action == 'follow_back' || github.event.inputs.action == 'cleanup' || github.event.inputs.action == 'stats_only'
       run: python follower_automation.py
       env:
         GITHUB_TOKEN: ${{ secrets.PERSONAL_GITHUB_TOKEN }}
@@ -74,7 +74,7 @@ jobs:
         DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
 
     - name: 🔎 Run GitHub Discovery
-      if: github.event.inputs.action == 'discovery'
+      if: github.event_name == 'schedule' || github.event.inputs.action == 'both' || github.event.inputs.action == 'discovery'
       run: python discovery.py
       env:
         GITHUB_TOKEN: ${{ secrets.PERSONAL_GITHUB_TOKEN }}
@@ -90,10 +90,10 @@ jobs:
       run: |
         echo "## 🤖 GitHub Automation Summary" >> $GITHUB_STEP_SUMMARY
         echo "- **Usuario:** @${{ github.repository_owner }}" >> $GITHUB_STEP_SUMMARY
-        echo "- **Acción:** ${{ github.event.inputs.action || 'both' }}" >> $GITHUB_STEP_SUMMARY
-        if [ "${{ github.event.inputs.action }}" == "discovery" ]; then
-          echo "- **Estrategia:** ${{ github.event.inputs.discovery_strategy }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Target:** ${{ github.event.inputs.discovery_target }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Acción:** ${{ github.event_name == 'schedule' && 'Full Daily Sync' || github.event.inputs.action }}" >> $GITHUB_STEP_SUMMARY
+        if [[ "${{ github.event_name }}" == "schedule" || "${{ github.event.inputs.action }}" == "discovery" || "${{ github.event.inputs.action }}" == "both" ]]; then
+          echo "- **Estrategia Descubrimiento:** ${{ github.event.inputs.discovery_strategy || 'search' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Target Descubrimiento:** ${{ github.event.inputs.discovery_target || 'follow back' }}" >> $GITHUB_STEP_SUMMARY
         fi
         echo "- **Dry Run:** ${{ github.event.inputs.dry_run || 'false' }}" >> $GITHUB_STEP_SUMMARY
         echo "- **Fecha:** $(date)" >> $GITHUB_STEP_SUMMARY

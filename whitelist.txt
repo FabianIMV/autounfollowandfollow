@@ -1,0 +1,7 @@
+# Whitelist file for GitHub Follower Automation
+# Add one username per line. These users will NEVER be unfollowed.
+# Comments start with # and empty lines are ignored.
+
+# Example:
+# github
+# octocat

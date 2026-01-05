@@ -1,22 +1,60 @@
-# 🤖 GitHub Auto Follow/Unfollow
+# GitHub Follower Automation 🤖
 
-**Automatically manages your GitHub followers and following.**
+Script y flujo de trabajo de GitHub Actions para automatizar el manejo de seguidores en GitHub.
 
-## What it does:
-- ✅ **Follows** everyone who follows you
-- ❌ **Unfollows** everyone who doesn't follow you back
-- 🛡️ **Safe limits** (20 unfollows, 15 follows per run)
-- 📊 **Detailed statistics** and logs
+## ✨ Características
 
-## Quick Setup:
+- 🧹 **Autounfollow**: Deja de seguir a quienes no te siguen de vuelta.
+- 🤝 **Autofollow**: Sigue automáticamente a tus seguidores.
+- 🛡️ **Whitelist**: Protege a usuarios específicos para que nunca sean eliminados (vía `whitelist.txt`).
+- 🧪 **Dry Run**: Prueba los cambios sin ejecutarlos realmente.
+- 📊 **Estadísticas**: Resumen detallado de seguidores, seguidos y ratio.
+- 🚀 **GitHub Actions**: Automatización diaria totalmente configurable.
 
-1. **Create** a [Personal Access Token](https://github.com/settings/tokens) with `user` permissions
-2. **Add** it as repository secret: `PERSONAL_GITHUB_TOKEN`
-3. **Copy** the workflow file to `.github/workflows/`
-4. **Done!** Runs automatically daily at 8:00 AM UTC
+## 🛠️ Instalación Local
 
-## Manual Run:
-- Go to **Actions** → **GitHub Follower Automation** → **Run workflow**
+```bash
+# Instalar dependencias
+pip install -r requirements.txt
+
+# Configurar variables de entorno
+export GITHUB_TOKEN="tu_token_aqui"
+export GITHUB_USERNAME="tu_usuario"
+
+# Ejecutar (modo prueba por defecto si configuras DRY_RUN=true)
+export DRY_RUN=true
+python follower_automation.py
+```
+
+## ⚙️ Configuración (GitHub Actions)
+
+1. Ve a **Settings > Secrets and variables > Actions**.
+2. Añade un **Repository secret** llamado `PERSONAL_GITHUB_TOKEN` con permisos de `user:follow`.
+3. (Opcional) Configura variables como `MAX_UNFOLLOWS_PER_RUN` o `DELAY_SECONDS`.
+
+### 🛡️ Uso de Whitelist
+
+Crea o edita el archivo `whitelist.txt` y añade un nombre de usuario por línea. El script ignorará a estos usuarios durante el proceso de limpieza.
+
+## 🔎 Descubrimiento de Perfiles
+
+El nuevo script `discovery.py` te permite encontrar gente interesante para seguir.
+
+### Uso Local
+
+```bash
+# Buscar gente que hace "follow back" globalmente
+export DISCOVERY_STRATEGY="search"
+export DISCOVERY_TARGET="follow back"
+python discovery.py
+
+# Buscar gente usando el hashtag "f4f" (follow for follow)
+export DISCOVERY_STRATEGY="search"
+export DISCOVERY_TARGET="f4f"
+python discovery.py
+```
+
+## 📄 Licencia
 - Choose: `both`, `follow_back`, `cleanup`, or `stats_only`
 
 ## Configuration:

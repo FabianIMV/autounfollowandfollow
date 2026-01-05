@@ -4,14 +4,16 @@ Script para automatizar el manejo de seguidores en GitHub
 Funcionalidades:
 - Dejar de seguir a usuarios que no te siguen de vuelta
 - Seguir a usuarios que te siguen pero tú no los sigues
+- Lista blanca (whitelist) para proteger usuarios específicos
+- Modo de prueba (dry-run) para verificar acciones sin ejecutarlas
 """
 
 import os
 import time
 import requests
-import json
-from datetime import datetime
 import logging
+from datetime import datetime
+from typing import List, Set, Dict, Optional, Any
 
 # Configurar logging
 logging.basicConfig(
@@ -30,6 +32,11 @@ class GitHubFollowerManager:
         self.max_unfollows_per_run = int(os.getenv('MAX_UNFOLLOWS_PER_RUN', '20'))
         self.max_follows_per_run = int(os.getenv('MAX_FOLLOWS_PER_RUN', '15'))
         self.delay_between_actions = int(os.getenv('DELAY_SECONDS', '5'))
+        self.dry_run = os.getenv('DRY_RUN', 'false').lower() == 'true'
+        
+        # Whitelist
+        self.whitelist_file = os.getenv('WHITELIST_FILE', 'whitelist.txt')
+        self.whitelist = self._load_whitelist()
         
         # Headers para la API de GitHub
         self.headers = {
@@ -40,8 +47,23 @@ class GitHubFollowerManager:
         
         # Base URL de la API de GitHub
         self.base_url = 'https://api.github.com'
-    
-    def get_followers(self, username=None):
+
+    def _load_whitelist(self) -> Set[str]:
+        """Cargar lista blanca de usuarios desde un archivo"""
+        whitelist = set()
+        if os.path.exists(self.whitelist_file):
+            try:
+                with open(self.whitelist_file, 'r') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith('#'):
+                            whitelist.add(line.lower())
+                logger.info(f"📋 Whitelist cargada: {len(whitelist)} usuarios")
+            except Exception as e:
+                logger.error(f"❌ Error cargando whitelist: {e}")
+        return whitelist
+
+    def get_followers(self, username: Optional[str] = None) -> List[Dict[str, Any]]:
         """Obtener lista de seguidores"""
         if not username:
             username = self.username
@@ -60,22 +82,20 @@ class GitHubFollowerManager:
             
             if response.status_code == 200:
                 page_followers = response.json()
-                if not page_followers:  # No hay más seguidores
+                if not page_followers:
                     break
                     
                 followers.extend(page_followers)
                 logger.info(f"   📄 Página {page}: {len(page_followers)} seguidores")
                 page += 1
-                time.sleep(1)  # Respeto al rate limit
+                time.sleep(0.5)
             else:
                 logger.error(f"❌ Error obteniendo seguidores: {response.status_code}")
-                logger.error(f"Response: {response.text}")
                 break
         
-        logger.info(f"✅ Total seguidores: {len(followers)}")
         return followers
     
-    def get_following(self, username=None):
+    def get_following(self, username: Optional[str] = None) -> List[Dict[str, Any]]:
         """Obtener lista de usuarios que sigo"""
         if not username:
             username = self.username
@@ -94,118 +114,94 @@ class GitHubFollowerManager:
             
             if response.status_code == 200:
                 page_following = response.json()
-                if not page_following:  # No hay más seguidos
+                if not page_following:
                     break
                     
                 following.extend(page_following)
                 logger.info(f"   📄 Página {page}: {len(page_following)} seguidos")
                 page += 1
-                time.sleep(1)  # Respeto al rate limit
+                time.sleep(0.5)
             else:
                 logger.error(f"❌ Error obteniendo seguidos: {response.status_code}")
-                logger.error(f"Response: {response.text}")
                 break
         
-        logger.info(f"✅ Total seguidos: {len(following)}")
         return following
     
-    def follow_user(self, username):
+    def follow_user(self, username: str) -> bool:
         """Seguir a un usuario"""
+        if self.dry_run:
+            logger.info(f"🧪 [DRY-RUN] Seguiría a @{username}")
+            return True
+
         url = f"{self.base_url}/user/following/{username}"
-        
         response = requests.put(url, headers=self.headers)
         
         if response.status_code == 204:
             logger.info(f"✅ Ahora sigues a @{username}")
             return True
-        elif response.status_code == 404:
-            logger.warning(f"⚠️  Usuario @{username} no encontrado")
-            return False
-        else:
-            logger.error(f"❌ Error siguiendo a @{username}: {response.status_code}")
-            return False
+        logger.error(f"❌ Error siguiendo a @{username}: {response.status_code}")
+        return False
     
-    def unfollow_user(self, username):
+    def unfollow_user(self, username: str) -> bool:
         """Dejar de seguir a un usuario"""
+        if self.dry_run:
+            logger.info(f"🧪 [DRY-RUN] Dejaría de seguir a @{username}")
+            return True
+
         url = f"{self.base_url}/user/following/{username}"
-        
         response = requests.delete(url, headers=self.headers)
         
         if response.status_code == 204:
             logger.info(f"✅ Dejaste de seguir a @{username}")
             return True
-        elif response.status_code == 404:
-            logger.warning(f"⚠️  Usuario @{username} no encontrado o no lo seguías")
-            return False
-        else:
-            logger.error(f"❌ Error dejando de seguir a @{username}: {response.status_code}")
-            return False
+        logger.error(f"❌ Error dejando de seguir a @{username}: {response.status_code}")
+        return False
     
-    def check_if_following(self, username):
-        """Verificar si sigo a un usuario"""
-        url = f"{self.base_url}/user/following/{username}"
-        
-        response = requests.get(url, headers=self.headers)
-        
-        return response.status_code == 204
-    
-    def get_user_info(self, username):
+    def get_user_info(self, username: str) -> Optional[Dict[str, Any]]:
         """Obtener información básica de un usuario"""
         url = f"{self.base_url}/users/{username}"
-        
         response = requests.get(url, headers=self.headers)
-        
         if response.status_code == 200:
             return response.json()
         return None
     
-    def should_skip_user(self, user_data):
-        """Lógica para determinar si saltar un usuario (filtros personalizados)"""
-        # Filtros de seguridad
+    def should_skip_user(self, user_data: Dict[str, Any]) -> bool:
+        """Determinando si saltar un usuario por filtros o whitelist"""
+        username = user_data.get('login', '').lower()
         
-        # No dejar de seguir a usuarios muy populares (posibles false positives)
+        # Whitelist check
+        if username in self.whitelist:
+            logger.info(f"⏭️  Saltando @{username} (en whitelist)")
+            return True
+            
+        # Filtros de seguridad
         if user_data.get('followers', 0) > 10000:
-            logger.info(f"⏭️  Saltando @{user_data['login']} (usuario popular: {user_data['followers']} seguidores)")
+            logger.info(f"⏭️  Saltando @{username} (usuario popular)")
             return True
         
-        # No dejar de seguir a organizaciones oficiales de GitHub
-        if user_data.get('type') == 'Organization' and 'github' in user_data.get('login', '').lower():
-            logger.info(f"⏭️  Saltando @{user_data['login']} (organización GitHub)")
+        if user_data.get('type') == 'Organization' and 'github' in username:
+            logger.info(f"⏭️  Saltando @{username} (organización GitHub)")
             return True
         
         return False
     
     def follow_back_followers(self):
         """Seguir a usuarios que te siguen pero tú no los sigues"""
-        logger.info("🚀 Iniciando proceso: Seguir a seguidores...")
+        logger.info("🚀 Proceso: Seguir a seguidores...")
         
         followers = self.get_followers()
         following = self.get_following()
         
-        # Crear sets para comparación rápida
         follower_usernames = {user['login'] for user in followers}
         following_usernames = {user['login'] for user in following}
-        
-        # Usuarios que me siguen pero yo no los sigo
         to_follow_back = follower_usernames - following_usernames
-        
-        logger.info(f"📊 Análisis de seguidores:")
-        logger.info(f"   - Te siguen: {len(follower_usernames)} usuarios")
-        logger.info(f"   - Tú sigues: {len(following_usernames)} usuarios")
-        logger.info(f"   - Para seguir de vuelta: {len(to_follow_back)} usuarios")
         
         if not to_follow_back:
             logger.info("✨ Ya sigues a todos tus seguidores!")
             return
         
-        # Seguir con límites de seguridad
         followed_count = 0
         for username in list(to_follow_back)[:self.max_follows_per_run]:
-            if followed_count >= self.max_follows_per_run:
-                logger.info(f"⚠️  Límite alcanzado: {self.max_follows_per_run} follows por ejecución")
-                break
-            
-            # Obtener info del usuario para filtros
             user_info = self.get_user_info(username)
             if user_info and self.should_skip_user(user_info):
                 continue
@@ -214,148 +210,87 @@ class GitHubFollowerManager:
                 followed_count += 1
                 time.sleep(self.delay_between_actions)
         
-        logger.info(f"✨ Proceso completado. Seguiste a {followed_count} usuarios nuevos.")
+        logger.info(f"✨ Seguiste a {followed_count} usuarios nuevos.")
     
     def cleanup_non_followers(self):
         """Dejar de seguir a usuarios que no te siguen de vuelta"""
-        logger.info("🧹 Iniciando proceso: Limpiar no-seguidores...")
+        logger.info("🧹 Proceso: Limpiar no-seguidores...")
         
-        followers = self.get_followers()
         following = self.get_following()
+        followers = self.get_followers()
         
-        # Crear sets para comparación rápida
-        follower_usernames = {user['login'] for user in followers}
-        following_usernames = {user['login'] for user in following}
-        
-        # Usuarios que sigo pero no me siguen de vuelta
+        follower_usernames = {user['login'].lower() for user in followers}
+        following_usernames = {user['login'].lower() for user in following}
         non_followers = following_usernames - follower_usernames
-        
-        logger.info(f"📊 Análisis de seguidos:")
-        logger.info(f"   - Tú sigues: {len(following_usernames)} usuarios")
-        logger.info(f"   - Te siguen de vuelta: {len(following_usernames & follower_usernames)} usuarios")
-        logger.info(f"   - No te siguen de vuelta: {len(non_followers)} usuarios")
         
         if not non_followers:
             logger.info("✨ Todos los usuarios que sigues te siguen de vuelta!")
             return
         
-        # Crear mapa de información de usuarios
-        following_info = {user['login']: user for user in following}
-        
-        # Dejar de seguir con límites de seguridad
+        following_info = {user['login'].lower(): user for user in following}
         unfollowed_count = 0
+        
         for username in list(non_followers)[:self.max_unfollows_per_run]:
-            if unfollowed_count >= self.max_unfollows_per_run:
-                logger.info(f"⚠️  Límite alcanzado: {self.max_unfollows_per_run} unfollows por ejecución")
-                break
-            
-            # Aplicar filtros de seguridad
-            user_info = following_info.get(username, {})
-            if self.should_skip_user(user_info):
+            user_inf = following_info.get(username, {})
+            # We need full user info for followers count check if not in following_info
+            if 'followers' not in user_inf:
+                user_inf = self.get_user_info(username) or {}
+
+            if self.should_skip_user(user_inf):
                 continue
             
             if self.unfollow_user(username):
                 unfollowed_count += 1
                 time.sleep(self.delay_between_actions)
         
-        logger.info(f"✨ Proceso completado. Dejaste de seguir a {unfollowed_count} usuarios.")
+        logger.info(f"✨ Dejaste de seguir a {unfollowed_count} usuarios.")
     
-    def get_statistics(self):
+    def get_statistics(self) -> Dict[str, Any]:
         """Obtener estadísticas actuales"""
-        logger.info("📊 Obteniendo estadísticas...")
-        
         followers = self.get_followers()
         following = self.get_following()
         
-        follower_usernames = {user['login'] for user in followers}
-        following_usernames = {user['login'] for user in following}
+        follower_usernames = {user['login'].lower() for user in followers}
+        following_usernames = {user['login'].lower() for user in following}
         
-        mutual_follows = follower_usernames & following_usernames
-        only_followers = follower_usernames - following_usernames
-        only_following = following_usernames - follower_usernames
+        mutual = follower_usernames & following_usernames
         
         stats = {
-            'followers_count': len(followers),
-            'following_count': len(following),
-            'mutual_follows': len(mutual_follows),
-            'only_followers': len(only_followers),
-            'only_following': len(only_following),
-            'follow_ratio': len(followers) / max(len(following), 1)
+            'followers': len(followers),
+            'following': len(following),
+            'mutual': len(mutual),
+            'ratio': len(followers) / max(len(following), 1)
         }
         
-        logger.info("📈 Estadísticas actuales:")
-        logger.info(f"   - Seguidores: {stats['followers_count']}")
-        logger.info(f"   - Siguiendo: {stats['following_count']}")
-        logger.info(f"   - Seguimiento mutuo: {stats['mutual_follows']}")
-        logger.info(f"   - Solo te siguen: {stats['only_followers']}")
-        logger.info(f"   - Solo los sigues: {stats['only_following']}")
-        logger.info(f"   - Ratio seguidor/siguiendo: {stats['follow_ratio']:.2f}")
-        
+        logger.info(f"📊 Estadísticas: {stats['followers']} seguidores | {stats['following']} siguiendo | Ratio: {stats['ratio']:.2f}")
         return stats
     
-    def run_automation(self, action='both'):
-        """Ejecutar la automatización completa"""
-        logger.info("🤖 Iniciando automatización de seguidores GitHub...")
-        logger.info(f"📅 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        logger.info(f"👤 Usuario: @{self.username}")
-        logger.info(f"🎯 Acción: {action}")
-        
+    def run(self, action: str = 'both'):
+        """Ejecución principal"""
+        if self.dry_run:
+            logger.info("🧪 MODO DRY-RUN ACTIVADO: No se realizarán cambios reales.")
+
         if not self.token or not self.username:
-            logger.error("❌ Token de GitHub o username no configurado")
+            logger.error("❌ GITHUB_TOKEN o GITHUB_USERNAME no configurados.")
             return
+
+        initial_stats = self.get_statistics()
         
-        try:
-            # Mostrar estadísticas iniciales
-            initial_stats = self.get_statistics()
+        if action in ['both', 'follow_back']:
+            self.follow_back_followers()
+            time.sleep(2)
             
-            # Ejecutar acciones según el parámetro
-            if action in ['both', 'follow_back']:
-                logger.info("\n" + "="*50)
-                self.follow_back_followers()
-                time.sleep(10)  # Pausa entre procesos
-            
-            if action in ['both', 'cleanup']:
-                logger.info("\n" + "="*50)
-                self.cleanup_non_followers()
-            
-            # Mostrar estadísticas finales si se ejecutaron ambas acciones
-            if action == 'both':
-                logger.info("\n" + "="*50)
-                logger.info("📊 ESTADÍSTICAS FINALES:")
-                final_stats = self.get_statistics()
-                
-                # Calcular cambios
-                follower_change = final_stats['followers_count'] - initial_stats['followers_count']
-                following_change = final_stats['following_count'] - initial_stats['following_count']
-                
-                logger.info(f"📈 Cambios en esta ejecución:")
-                logger.info(f"   - Seguidores: {follower_change:+d}")
-                logger.info(f"   - Siguiendo: {following_change:+d}")
-            
-            logger.info("\n🎉 Automatización completada exitosamente!")
-            
-        except Exception as e:
-            logger.error(f"❌ Error durante la automatización: {str(e)}")
-            raise
+        if action in ['both', 'cleanup']:
+            self.cleanup_non_followers()
+
+        if action != 'stats_only':
+            final_stats = self.get_statistics()
+            logger.info(f"📈 Cambio: {final_stats['followers'] - initial_stats['followers']:+d} seguidores | {final_stats['following'] - initial_stats['following']:+d} siguiendo")
 
 def main():
-    """Función principal"""
-    # Configurar desde variables de entorno o argumentos
     action = os.getenv('AUTOMATION_ACTION', 'both')
-    
     manager = GitHubFollowerManager()
-    
-    if not manager.token:
-        logger.error("❌ GITHUB_TOKEN no configurado. Agrega tu token de GitHub.")
-        logger.error("   Puedes generar uno en: https://github.com/settings/tokens")
-        return
-    
-    if not manager.username:
-        logger.error("❌ GITHUB_USERNAME no configurado. Agrega tu username de GitHub.")
-        return
-    
-    # Ejecutar automatización
-    manager.run_automation(action)
+    manager.run(action)
 
 if __name__ == "__main__":
     main()

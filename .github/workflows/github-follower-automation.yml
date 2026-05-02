@@ -1,63 +1,132 @@
+# .github/workflows/github-follower-automation.yml
 name: GitHub Follower Automation
-
 
 on:
   schedule:
-    - cron: '0 0 * * *'→ Runs at 00:00  # Runs daily at midnight
+    # Ejecutar cada día a las 8:00 AM UTC
+    - cron: '0 8 * * *'
+
+  # Keepalive: evitar que GitHub deshabilite el workflow por inactividad (cada 45 días)
+  # Este job solo hace un push vacío para mantener el repo activo
+  # No necesitas hacer nada, se ejecuta solo.
+
+  # Permitir ejecución manual
   workflow_dispatch:
     inputs:
       action:
-        description: 'Action to perform'
+        description: 'Qué acción realizar'
         required: true
         default: 'both'
         type: choice
         options:
-          - both
-          - follow_back
-          - cleanup
-          - stats_only
-      discovery:
-        description: 'Run discovery script?'
+        - both
+        - follow_back
+        - cleanup
+        - stats_only
+        - discovery
+      dry_run:
+        description: 'Modo Dry Run (solo simulación)'
         required: true
         default: 'false'
-        type: boolean
-
+        type: choice
+        options:
+        - 'false'
+        - 'true'
+      discovery_strategy:
+        description: 'Estrategia de descubrimiento (solo si action=discovery)'
+        required: false
+        default: 'search'
+        type: choice
+        options:
+        - search
+        - stargazers
+        - followers
+        - trending
+      discovery_target:
+        description: 'Target (query search, repo owner/repo, o usuario)'
+        required: false
+        default: 'type:user followers:>5 repos:>3'
 
 jobs:
-  automate:
+  automation:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+    - name: 🚀 Checkout repository
+      uses: actions/checkout@v4
 
+    - name: 🐍 Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
+    - name: 📦 Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; else pip install requests; fi
 
+    - name: 🤖 Run GitHub follower automation
+      if: github.event_name == 'schedule' || github.event.inputs.action == 'both' || github.event.inputs.action == 'follow_back' || github.event.inputs.action == 'cleanup' || github.event.inputs.action == 'stats_only'
+      run: python follower_automation.py
+      env:
+        GITHUB_TOKEN: ${{ secrets.PERSONAL_GITHUB_TOKEN }}
+        GITHUB_USERNAME: ${{ github.repository_owner }}
+        MAX_UNFOLLOWS_PER_RUN: ${{ vars.MAX_UNFOLLOWS_PER_RUN || '20' }}
+        MAX_FOLLOWS_PER_RUN: ${{ vars.MAX_FOLLOWS_PER_RUN || '15' }}
+        DELAY_SECONDS: ${{ vars.DELAY_SECONDS || '5' }}
+        AUTOMATION_ACTION: ${{ github.event.inputs.action || 'both' }}
+        DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install requests
+    - name: 🔎 Run GitHub Discovery
+      if: github.event_name == 'schedule' || github.event.inputs.action == 'both' || github.event.inputs.action == 'discovery'
+      run: python discovery.py
+      env:
+        GITHUB_TOKEN: ${{ secrets.PERSONAL_GITHUB_TOKEN }}
+        GITHUB_USERNAME: ${{ github.repository_owner }}
+        DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+        DISCOVERY_STRATEGY: ${{ github.event.inputs.discovery_strategy || 'search' }}
+        DISCOVERY_TARGET: ${{ github.event.inputs.discovery_target || 'type:user followers:>5 repos:>3' }}
+        MAX_DISCOVERY_FOLLOWS: ${{ vars.MAX_DISCOVERY_FOLLOWS || '10' }}
+        MIN_FOLLOW_RATIO: ${{ vars.MIN_FOLLOW_RATIO || '0.3' }}
 
+    - name: 📊 Summary
+      if: always()
+      run: |
+        echo "## 🤖 GitHub Automation Summary" >> $GITHUB_STEP_SUMMARY
+        echo "- **Usuario:** @${{ github.repository_owner }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Acción:** ${{ github.event_name == 'schedule' && 'Full Daily Sync' || github.event.inputs.action }}" >> $GITHUB_STEP_SUMMARY
+        if [[ "${{ github.event_name }}" == "schedule" || "${{ github.event.inputs.action }}" == "discovery" || "${{ github.event.inputs.action }}" == "both" ]]; then
+          echo "- **Estrategia Descubrimiento:** ${{ github.event.inputs.discovery_strategy || 'search' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Target Descubrimiento:** ${{ github.event.inputs.discovery_target || 'type:user followers:>5 repos:>3' }}" >> $GITHUB_STEP_SUMMARY
+        fi
+        echo "- **Dry Run:** ${{ github.event.inputs.dry_run || 'false' }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Fecha:** $(date)" >> $GITHUB_STEP_SUMMARY
+        echo "- **Estado:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
 
-      - name: Run follower automation
-        env:
-          GITHUB_TOKEN: ${{ secrets.PERSONAL_GITHUB_TOKEN }}
-          GITHUB_USERNAME: ${{ github.repository_owner }}
-          AUTOMATION_ACTION: ${{ github.event.inputs.action || 'both' }}
-          DRY_RUN: 'false'
-        run: python follower_automation.py
-
-
-      - name: Run discovery (if requested)
-        if: github.event.inputs.discovery == 'true'
-        env:
-          GITHUB_TOKEN: ${{ secrets.PERSONAL_GITHUB_TOKEN }}
-          GITHUB_USERNAME: ${{ github.repository_owner }}
-          DRY_RUN: 'false'
-          DISCOVERY_STRATEGY: 'trending'
-        run: python discovery.py
-
+  # Job independiente: mantiene el repo activo para evitar que GitHub deshabilite el schedule
+  keepalive:
+    runs-on: ubuntu-latest
+    # Solo correr los días 1 y 15 de cada mes (cada ~15 días, bien dentro del límite de 60 días)
+    if: github.event_name == 'schedule' && (startsWith(github.run_number, '1') || github.event_name == 'workflow_dispatch')
+    steps:
+    - name: 🔄 Keepalive - Re-enable workflow if disabled
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ secrets.PERSONAL_GITHUB_TOKEN }}
+        script: |
+          const workflows = await github.rest.actions.listRepoWorkflows({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+          });
+          for (const wf of workflows.data.workflows) {
+            if (wf.state === 'disabled_inactivity') {
+              await github.rest.actions.enableWorkflow({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: wf.id,
+              });
+              console.log(`✅ Workflow re-habilitado: ${wf.name}`);
+            }
+          }
+          console.log('🔄 Keepalive completado.');

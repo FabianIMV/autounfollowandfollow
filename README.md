@@ -11,7 +11,7 @@ Script y flujo de trabajo de GitHub Actions para automatizar el manejo de seguid
 - 📊 **Estadísticas**: Resumen detallado de seguidores, seguidos y ratio.
 - 🚀 **GitHub Actions**: Automatización diaria totalmente configurable.
 
-## 🛠️ Instalación Local
+## 🛠️ Instalación Local 
 
 ```bash
 # Instalar dependencias
